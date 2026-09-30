@@ -1,0 +1,10 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { IDBFactory } from 'fake-indexeddb';
+import { IndexedDbRepository } from '../src/storage/indexeddb.ts';
+import { seedDataset } from '../src/domain/seed.ts';
+import { newVersion } from '../src/domain/types.ts';
+import { evaluate } from '../src/domain/engine.ts';
+test('IndexedDB saves normalized revisions and loads exact calculation inputs',async()=>{const r=new IndexedDbRepository('test-reload',new IDBFactory());assert.equal(await r.load(),null);const d=seedDataset();assert.equal(await r.save(d,0),1);const saved=(await r.load())!;for(const key of ['materials','electrodes','parts','boms','plans'] as const)assert.deepEqual([...saved.data[key]].sort((a,b)=>a.id.localeCompare(b.id)),[...d[key]].sort((a,b)=>a.id.localeCompare(b.id)));assert.ok(Math.abs(evaluate(saved.data.plans[0],saved.data).total.max-29.66092)<1e-9);});
+test('concurrent stale save is rejected without changing stored data',async()=>{const factory=new IDBFactory(),a=new IndexedDbRepository('test-concurrent',factory),b=new IndexedDbRepository('test-concurrent',factory),d=seedDataset();await a.save(d,0);const next=structuredClone(d);next.materials.push(newVersion({...d.materials[0],cs:160},d.materials));await a.save(next,1);await assert.rejects(()=>b.save(d,1),/another tab/);assert.equal((await b.load())!.version,2);assert.equal((await b.load())!.data.materials.length,3);});
+test('immutable-write rejection aborts the full IndexedDB transaction',async()=>{const r=new IndexedDbRepository('test-immutable',new IDBFactory()),d=seedDataset();await r.save(d,0);const changed=structuredClone(d);changed.materials[0].cs=300;await assert.rejects(()=>r.save(changed,1),/Immutable/);const saved=(await r.load())!;assert.equal(saved.version,1);assert.equal(saved.data.materials.find(m=>m.id==='material-c1')!.cs,154);});
